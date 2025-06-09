@@ -1,15 +1,16 @@
-from deck import Deck
-from hand import Hand
+from .deck import Deck
+from ..hand import Hand
 
-class BlackJackHand(Hand):
+class BlackjackHand(Hand):
     def get_total(self):
         count = 0
         aces = 0
 
         for card in self.cards:
-            count += card.get_value()
-            if card.rank == "A":
-                aces += 1
+            if not card.face_down:
+                count += card.get_value()
+                if card.rank == "A":
+                    aces += 1
         
         while count > 21 and aces > 0:
             count -= 10
@@ -26,16 +27,22 @@ class BlackJackHand(Hand):
     def reveal_hidden(self):
         for card in self.cards:
             card.show()
+
+    def __str__(self):
+        return " -  ".join(str(card) for card in self.cards)
     
-class BlackJack:
-    def __init__(self, seed):
-        self.deck = Deck(seed)
-        self.dealer = BlackJackHand()
-        self.player = BlackJackHand()
+class Blackjack:
+    def __init__(self):
+        self.deck = Deck()
+        self.dealer = BlackjackHand()
+        self.player = BlackjackHand()
 
     def deal_hand(self):
         self.dealer.add_card(self.deck.draw_card())
-        self.dealer.add_card(self.deck.draw_card().hide())
+        hidden_card = self.deck.draw_card()
+        hidden_card.hide()
+        self.dealer.add_card(hidden_card)
+
 
         self.player.add_card(self.deck.draw_card())
         self.player.add_card(self.deck.draw_card())
@@ -49,7 +56,7 @@ class BlackJack:
         return "continue"
 
     def hit(self):
-        self.player.append(self.deck.draw_card())
+        self.player.add_card(self.deck.draw_card())
 
         if self.player.is_bust():
             return "dealer"
@@ -60,7 +67,7 @@ class BlackJack:
         self.dealer.reveal_hidden()
 
         while self.dealer.get_total() < 17:
-            self.dealer.add_card(self.deck.draw_card)
+            self.dealer.add_card(self.deck.draw_card())
         
         return self.check_winner()
 
@@ -73,10 +80,12 @@ class BlackJack:
 
         if dealer_total > player_total:
             return "dealer"
-        
-        if dealer_total < dealer_total:
+        if dealer_total < player_total:
             return "player"
-        
         if dealer_total == player_total:
             return "push"
+    def reset(self):
+        self.deck = Deck()
+        self.dealer = BlackjackHand()
+        self.player = BlackjackHand()
         
