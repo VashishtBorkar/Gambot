@@ -51,7 +51,7 @@ class Blackjack:
             if self.dealer.is_blackjack():
                 return "push"
             else:
-                return "player"
+                return "blackjack"
         
         return "continue"
 
@@ -61,6 +61,9 @@ class Blackjack:
         if self.player.is_bust():
             return "dealer"
         
+        if self.player.get_total() == 21:
+            return self.stay()
+
         return "continue"
 
     def stay(self):
@@ -70,10 +73,23 @@ class Blackjack:
             self.dealer.add_card(self.deck.draw_card())
         
         return self.check_winner()
+    
+    def can_double_down(self):
+        return len(self.player.cards) == 2 and not self.doubled_down
+    
+    def double_down(self):
+        if not self.can_double_down():
+            raise ValueError("Cannot double down at this stage.")
+
+        self.player.add_card(self.deck.draw())
+        self.doubled_down = True
+        return self.stay()
 
     def check_winner(self):
         if self.dealer.is_bust():
             return "player"
+        if self.player.is_bust():
+            return "dealer"
         
         dealer_total = self.dealer.get_total()
         player_total = self.player.get_total()

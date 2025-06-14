@@ -1,19 +1,41 @@
 from discord.ext import commands
 import discord
-from utils.session_manager import get_blackjack_session, reset_blackjack_session
+from utils.session_manager import (
+    has_blackjack_session,
+    get_blackjack_session,
+    reset_blackjack_session,
+    create_blackjack_session,
+    get_blackjack_bet,
+)
+
+from db.database import SessionLocal
+from db.models import UserEconomy
+from games.bet import Bet
 
 class BlackjackView(discord.ui.View):
-    def __init__(self, ctx, build_embed, reset_session):
-        super().__init__(timeout=60)
+    def __init__(self, ctx, cog):
+        super().__init__(timeout=120)
         self.ctx = ctx
-        self.build_embed = build_embed
-        self.reset_session = reset_session
+        self.cog = cog
+        self.message = None
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.ctx.author.id:
             await interaction.response.send_message("This isn't your game!", ephemeral=True)
             return False
         return True
+    
+    async def on_timeout(self):
+        self.disable_all_items()
+        reset_blackjack_session(self.ctx.author.id)
+
+        try:
+            if self.message:
+                await self.message.edit(view=self)
+
+            await self.ctx.send(f"{self.ctx.author.mention}, your Blackjack game timed out due to inactivity.")
+        except Exception as e:
+            print(f"Error during timeout handling: {e}")
 
     @discord.ui.button(label="Hit", style=discord.ButtonStyle.primary)
     async def hit(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -22,14 +44,10 @@ class BlackjackView(discord.ui.View):
             result = game.hit()
 
             if result in ("dealer", "player", "push"):
-                embed = self.build_embed(self.ctx, game, result)
-                self.reset_session(self.ctx.author.id)
-                await interaction.response.edit_message(embed=embed, view=None)
-                return  # exit early to avoid sending a second message
-
-
-            embed = self.build_embed(self.ctx, game, result if result != "continue" else None)
-            await interaction.response.edit_message(embed=embed, view=self)
+                await self.cog.finalize_game(interaction, self.ctx, game, result)
+            else: # continue
+                embed = self.cog.build_embed(self.ctx, game)
+                await interaction.response.edit_message(embed=embed, view=self)
 
         except Exception as e:
             await interaction.response.send_message(f"Error: {e}", ephemeral=True) 
@@ -39,15 +57,8 @@ class BlackjackView(discord.ui.View):
         try:
             game = get_blackjack_session(self.ctx.author.id)
             result = game.stay()
-            
-            embed = self.build_embed(self.ctx, game, result)
-            self.reset_session(self.ctx.author.id)
-            await interaction.response.edit_message(embed=embed, view=None)
-            return  # exit early to avoid sending a second message
+            await self.cog.finalize_game(interaction, self.ctx, game, result)
 
-
-            embed = self.build_embed(self.ctx, game, result)
-            await interaction.response.edit_message(embed=embed, view=self)
         except Exception as e:
             await interaction.response.send_message(f"Error: {e}", ephemeral=True)
 
@@ -59,14 +70,21 @@ class BlackjackCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
     
-    def handle_result(self, result):
-        if result == "dealer":
-            return "💥 Dealer wins!"
-        elif result == "player":
-            return "🎉 You win!"
-        elif result == "draw":
-            return "🤝 It's a tie!"
-        return None # For "continue" or unrecognized result
+    async def handle_payout(self, ctx, result):
+        bet = get_blackjack_bet(ctx.author.id)
+        if not bet:
+            return 0
+        
+        if result == "player":
+            winnings = bet.payout(multiplier=2)
+        elif result == "blackjack":
+            winnings = bet.payout(multiplier=2.5)
+        elif result == "push":
+            winnings = bet.payout(multiplier=1)
+        else:
+            winnings = 0
+
+        return winnings
     
     def build_embed(self, ctx, game, result=None):
         color = (
@@ -81,12 +99,12 @@ class BlackjackCog(commands.Cog):
         )
 
         if result:
-            msg = {
+            outcome_text = {
                 "dealer": "💥 Dealer wins!",
                 "player": "🎉 You win!",
                 "push": "🤝 Push!"
-            }.get(result, "")
-            embed.description = msg
+            }.get(result, "Game Over!")
+            embed.description = f"{outcome_text}"
 
         embed.add_field(
             name="Your hand",
@@ -102,22 +120,77 @@ class BlackjackCog(commands.Cog):
 
         return embed
     
+    async def finalize_game(self, interaction, ctx, game, result):
+        await self.handle_payout(ctx, result)
+        reset_blackjack_session(ctx.author.id)
+
+        embed = self.build_embed(ctx, game, result)
+        await interaction.response.edit_message(embed=embed, view=None)
+
+        if isinstance(interaction.message.components[0], discord.ui.ActionRow):
+            view = interaction.message._state.view_store.get_view(interaction.message.id)
+            if view:
+                view.stop()
+
     @commands.command()
-    async def blackjack(self, ctx):
-        game = get_blackjack_session(ctx.author.id)
-        game.reset()
+    async def blackjack(self, ctx, bet: str = None):
+        try:
+            if not bet:
+                await ctx.send("Usage: !blackjack <all | half | bet_amount>")
+                return 
 
-        result = game.deal_hand()
+            user_id = ctx.author.id
+            print(f"Playing blackjack with {ctx.author}")
 
-        embed = self.build_embed(ctx, game, result if result != "continue" else None)
+            # Handle betting amount
+            with SessionLocal() as session:
+                user = session.query(UserEconomy).filter_by(user_id=user_id).first()
+                if not user:
+                    await ctx.send("You don't have an economy account yet.")
+                    return
 
-        if result != "continue":
-            reset_blackjack_session(ctx.author.id)
+                if bet.isdigit():
+                    bet_amount = int(bet)
+                elif bet.lower() == "all":
+                    bet_amount = user.balance
+                elif bet.lower() == "half":
+                    bet_amount = 0.5 * user.balance
+                else:
+                    await ctx.send("Specified an invalid amount.")
+                    return
+
+                try:
+                    user_bet = Bet(user_id, bet_amount)
+                    user_bet.place()
+                except ValueError as e:
+                    await ctx.send(str(e))
+                    return
+
+            if has_blackjack_session(user_id):
+                game = get_blackjack_session(user_id)
+                embed = self.build_embed(ctx, game)
+                view = BlackjackView(ctx, self)
+                msg = await ctx.send(f"{ctx.author.mention} You already have a game in progress!", embed=embed, view=view)
+                view.message = msg
+                return
+
+            # Create game and session
+
+            game = create_blackjack_session(user_id, user_bet)
+            result = game.deal_hand()
+            
+            embed = self.build_embed(ctx, game, result if result != "continue" else None)
             view = None
-        else:
-            view = BlackjackView(ctx, self.build_embed, reset_blackjack_session)
 
-        await ctx.send(embed=embed, view=view)
+            if result == "continue":
+                view = BlackjackView(ctx, self)
+
+            msg = await ctx.send(embed=embed, view=view)
+            if view:
+                view.message = msg
+        except Exception as e:
+            print(f"[EXCEPTION] in !blackjack: {e}")
+            await ctx.send(f"An error occurred: {e}")
 
 async def setup(bot):
     await bot.add_cog(BlackjackCog(bot))

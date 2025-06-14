@@ -27,8 +27,12 @@ async def hello(ctx):
 async def main():
     async with bot:
         await bot.load_extension("cogs.blackjack")
+        await bot.load_extension("cogs.economy")
         await bot.start(token)
 
 import asyncio
-asyncio.run(main())
+
+# Start the bot
+if __name__ == "__main__":
+    asyncio.run(main())
 
