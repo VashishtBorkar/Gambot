@@ -104,4 +104,3 @@ class Blackjack:
         self.deck = Deck()
         self.dealer = BlackjackHand()
         self.player = BlackjackHand()
-        

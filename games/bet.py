@@ -40,6 +40,9 @@ class Bet:
             session.commit()
 
         self.amount *= 2
+    
+    def get_bet_amount(self):
+        return self.amount
 
     def payout(self, multiplier=1):
         winnings = int(self.amount * multiplier)
@@ -51,3 +54,12 @@ class Bet:
             user.balance += winnings
             session.commit()
         return winnings
+    
+    def payout_total(self, total_winnings):
+        with SessionLocal() as session:
+            user = session.query(UserEconomy).filter_by(user_id=self.user_id).first()
+            if not user:
+                raise ValueError("User does not exist")
+            user.balance += total_winnings
+            session.commit()
+        return total_winnings

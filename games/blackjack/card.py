@@ -1,10 +1,3 @@
-suit_symbols = {
-    "spades": "♠️",
-    "hearts": "♥️",
-    "diamonds": "♦️",
-    "clubs": "♣️"
-}
-
 class Card:
     suit_symbols = {
         "spades": "♠️",

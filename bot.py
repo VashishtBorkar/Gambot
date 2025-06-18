@@ -26,8 +26,9 @@ async def hello(ctx):
 # ✅ Use an async setup function to load cogs
 async def main():
     async with bot:
-        await bot.load_extension("cogs.blackjack")
         await bot.load_extension("cogs.economy")
+        await bot.load_extension("cogs.blackjack")
+        await bot.load_extension("cogs.roulette")
         await bot.start(token)
 
 import asyncio

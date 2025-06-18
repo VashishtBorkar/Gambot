@@ -22,7 +22,7 @@ class EconomyCog(commands.Cog):
                 return
 
             embed = discord.Embed(
-                title="🏆 Top 10 Richest Players",
+                title="🏆 Richest Players",
                 color=discord.Color.gold()
             )
 
