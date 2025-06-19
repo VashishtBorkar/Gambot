@@ -36,6 +36,7 @@ class Blackjack:
         self.deck = Deck()
         self.dealer = BlackjackHand()
         self.player = BlackjackHand()
+        self.doubled_down = False
 
     def deal_hand(self):
         self.dealer.add_card(self.deck.draw_card())
@@ -81,7 +82,7 @@ class Blackjack:
         if not self.can_double_down():
             raise ValueError("Cannot double down at this stage.")
 
-        self.player.add_card(self.deck.draw())
+        self.player.add_card(self.deck.draw_card())
         self.doubled_down = True
         return self.stay()
 

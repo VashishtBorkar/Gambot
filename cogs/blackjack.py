@@ -16,6 +16,33 @@ class BlackjackView(discord.ui.View):
         self.cog = cog
         self.message = None
 
+        game = session_manager.get_game(ctx.author.id)
+        if game.can_double_down():
+            self.add_item(self.DoubleDownButton())
+
+    class DoubleDownButton(discord.ui.Button):
+        def __init__(self):
+            super().__init__(label="Double Down", style=discord.ButtonStyle.success)
+
+        async def callback(self, interaction: discord.Interaction):
+            view = self.view
+            game = session_manager.get_game(view.ctx.author.id)
+
+            if not game.can_double_down():
+                await interaction.response.send_message("You can't double down right now.", ephemeral=True)
+                return
+
+            bet = session_manager.get_bet(view.ctx.author.id)
+            try:
+                bet.double()
+            except ValueError as e:
+                await interaction.response.send_message(str(e), ephemeral=True)
+                return
+
+            result = game.double_down()
+            await view.cog.finalize_game(interaction, view.ctx, game, result, view)
+
+
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.ctx.author.id:
             await interaction.response.send_message("This isn't your game!", ephemeral=True)
@@ -41,7 +68,7 @@ class BlackjackView(discord.ui.View):
             result = game.hit()
 
             if result in ("blackjack", "dealer", "player", "push"):
-                await self.cog.finalize_game(interaction, self.ctx, game, result)
+                await self.cog.finalize_game(interaction, self.ctx, game, result, self)
             else: # continue
                 embed = self.cog.build_embed(self.ctx, game)
                 await interaction.response.edit_message(embed=embed, view=self)
@@ -54,7 +81,7 @@ class BlackjackView(discord.ui.View):
         try:
             game = session_manager.get_game(self.ctx.author.id)
             result = game.stay()
-            await self.cog.finalize_game(interaction, self.ctx, game, result)
+            await self.cog.finalize_game(interaction, self.ctx, game, result, self)
 
         except Exception as e:
             await interaction.response.send_message(f"Error: {e}", ephemeral=True)
@@ -118,7 +145,7 @@ class BlackjackCog(commands.Cog):
 
         return embed
     
-    async def finalize_game(self, interaction, ctx, game, result):
+    async def finalize_game(self, interaction, ctx, game, result, view=None):
         winnings = await self.handle_payout(ctx, result)
         session_manager.reset_session(ctx.author.id)
 
@@ -128,10 +155,8 @@ class BlackjackCog(commands.Cog):
         if winnings > 0:
             await ctx.send(f"💰{ctx.author.mention} You won `${int(winnings)}` from blackjack!")
 
-        if isinstance(interaction.message.components[0], discord.ui.ActionRow):
-            view = interaction.message._state.view_store.get_view(interaction.message.id)
-            if view:
-                view.stop()
+        if view:
+            view.stop()
 
     @commands.command()
     async def blackjack(self, ctx, bet: str = None):
@@ -185,11 +210,13 @@ class BlackjackCog(commands.Cog):
             view = None
 
             if result == "continue":
+                embed = self.build_embed(ctx, game)
                 view = BlackjackView(ctx, self)
-
-            msg = await ctx.send(embed=embed, view=view)
-            if view:
+                msg = await ctx.send(embed=embed, view=view)
                 view.message = msg
+            else:
+                await self.finalize_game(ctx, ctx, game, result)
+
         except Exception as e:
             print(f"[EXCEPTION] in !blackjack: {e}")
             await ctx.send(f"An error occurred: {e}")

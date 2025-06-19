@@ -157,7 +157,7 @@ class RouletteCog(commands.Cog):
         # embed.add_field(name="Spin Result", value=f"`{spin_number} {emoji}`", inline=False)
         # embed.add_field(name="Payout", value=f"`{total_winnings}`", inline=True)
         # embed.add_field(name="Outcome", value=win_status, inline=True)
-
+        
         embed.set_footer(text="Thanks for playing roulette!")
         return embed
     
