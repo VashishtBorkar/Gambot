@@ -40,8 +40,7 @@ class BlackjackView(discord.ui.View):
                 return
 
             result = game.double_down()
-            await view.cog.finalize_game(interaction, view.ctx, game, result, view)
-
+            await view.cog.handle_game_result(interaction, view.ctx, result, view)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.ctx.author.id:
@@ -66,13 +65,7 @@ class BlackjackView(discord.ui.View):
         try:
             game = session_manager.get_game(self.ctx.author.id)
             result = game.hit()
-
-            if result in ("blackjack", "dealer", "player", "push"):
-                await self.cog.finalize_game(interaction, self.ctx, game, result, self)
-            else: # continue
-                embed = self.cog.build_embed(self.ctx, game)
-                await interaction.response.edit_message(embed=embed, view=self)
-
+            await self.cog.handle_game_result(interaction, self.ctx, result, self)
         except Exception as e:
             await interaction.response.send_message(f"Error: {e}", ephemeral=True) 
 
@@ -81,8 +74,7 @@ class BlackjackView(discord.ui.View):
         try:
             game = session_manager.get_game(self.ctx.author.id)
             result = game.stay()
-            await self.cog.finalize_game(interaction, self.ctx, game, result, self)
-
+            await self.cog.handle_game_result(interaction, self.ctx, result, self)
         except Exception as e:
             await interaction.response.send_message(f"Error: {e}", ephemeral=True)
 
@@ -94,26 +86,12 @@ class BlackjackCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
     
-    async def handle_payout(self, ctx, result):
-        bet = session_manager.get_bet(ctx.author.id)
-        if not bet:
-            return 0
-        
-        if result == "player":
-            winnings = bet.payout(multiplier=2)
-        elif result == "blackjack":
-            winnings = bet.payout(multiplier=2.5)
-        elif result == "push":
-            winnings = bet.payout(multiplier=1)
-        else:
-            winnings = 0
-
-        return winnings
-    
-    def build_embed(self, ctx, game, result=None):
+    def build_embed(self, ctx, game_state):
+        """Build Discord embed from game state"""
         color = (
-            discord.Color.green() if result == "player"
-            else discord.Color.red() if result == "dealer"
+            discord.Color.green() if game_state["outcome"] == "player_wins"
+            else discord.Color.red() if game_state["outcome"] == "dealer_wins"
+            else discord.Color.gold() if game_state["outcome"] == "blackjack"
             else discord.Color.blurple()
         )
 
@@ -122,41 +100,42 @@ class BlackjackCog(commands.Cog):
             color=color
         )
 
-        if result:
-            outcome_text = {
-                "dealer": "💥 Dealer wins!",
-                "player": "🎉 You win!",
-                "blackjack": "Blackjack!",
-                "push": "🤝 Push!",
-            }.get(result, "Game Over!")
-            embed.description = f"{outcome_text}"
+        if game_state["game_over"]:
+            embed.description = game_state["message"]
 
         embed.add_field(
             name="Your hand",
-            value=f"{game.player}\nValue: {game.player.get_total()}",
+            value=f"{game_state['player_display']}\nValue: {game_state['player_total']}",
             inline=False
         )
 
         embed.add_field(
             name="Dealer hand",
-            value=f"{game.dealer}\nValue: {game.dealer.get_total()}",
+            value=f"{game_state['dealer_display']}\nValue: {game_state['dealer_total']}",
             inline=False
         )
 
         return embed
     
-    async def finalize_game(self, interaction, ctx, game, result, view=None):
-        winnings = await self.handle_payout(ctx, result)
-        session_manager.reset_session(ctx.author.id)
+    async def handle_game_result(self, interaction, ctx, result, view=None):
+        """Handle the result of a game action"""
+        if result["game_over"]:
+            # Game is finished, handle payout and cleanup
+            winnings = result["payout"]
+            session_manager.reset_session(ctx.author.id)
 
-        embed = self.build_embed(ctx, game, result)
-        await interaction.response.edit_message(embed=embed, view=None)
+            embed = self.build_embed(ctx, result)
+            await interaction.response.edit_message(embed=embed, view=None)
 
-        if winnings > 0:
-            await ctx.send(f"💰{ctx.author.mention} You won `${int(winnings)}` from blackjack!")
+            if winnings > 0:
+                await ctx.send(f"💰{ctx.author.mention} You won ${int(winnings)} from blackjack!")
 
-        if view:
-            view.stop()
+            if view:
+                view.stop()
+        else:
+            # Game continues, update the view
+            embed = self.build_embed(ctx, result)
+            await interaction.response.edit_message(embed=embed, view=view)
 
     @commands.command()
     async def blackjack(self, ctx, bet: str = None):
@@ -180,7 +159,7 @@ class BlackjackCog(commands.Cog):
                 elif bet.lower() == "all":
                     bet_amount = user.balance
                 elif bet.lower() == "half":
-                    bet_amount = 0.5 * user.balance
+                    bet_amount = int(0.5 * user.balance)
                 else:
                     await ctx.send("Specified an invalid amount.")
                     return
@@ -194,28 +173,34 @@ class BlackjackCog(commands.Cog):
 
             if session_manager.has_session(user_id):
                 game = session_manager.get_game(user_id)
-                embed = self.build_embed(ctx, game)
+                game_state = game.get_game_state()
+                embed = self.build_embed(ctx, game_state)
                 view = BlackjackView(ctx, self)
                 msg = await ctx.send(f"{ctx.author.mention} You already have a game in progress!", embed=embed, view=view)
                 view.message = msg
                 return
 
             # Create game and session
+            game = Blackjack(bet_amount)
+            session_manager.create_session(user_id, game, user_bet)
             
-            session_manager.create_session(user_id, Blackjack(), user_bet)
-            game = session_manager.get_game(user_id)
             result = game.deal_hand()
             
-            embed = self.build_embed(ctx, game, result if result != "continue" else None)
-            view = None
-
-            if result == "continue":
-                embed = self.build_embed(ctx, game)
+            if result["game_over"]:
+                await self.handle_game_result(None, ctx, result)
+                # For initial deal, we need to send a message instead of editing
+                embed = self.build_embed(ctx, result)
+                await ctx.send(embed=embed)
+                
+                if result["payout"] > 0:
+                    await ctx.send(f"💰{ctx.author.mention} You won ${int(result['payout'])} from blackjack!")
+                
+                session_manager.reset_session(user_id)
+            else:
+                embed = self.build_embed(ctx, result)
                 view = BlackjackView(ctx, self)
                 msg = await ctx.send(embed=embed, view=view)
                 view.message = msg
-            else:
-                await self.finalize_game(ctx, ctx, game, result)
 
         except Exception as e:
             print(f"[EXCEPTION] in !blackjack: {e}")
