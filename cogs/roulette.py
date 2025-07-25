@@ -33,6 +33,7 @@ class RouletteCog(commands.Cog):
                 if not user:
                     await ctx.send("You don't have an economy account yet.")
                     return
+                
                 amount_token = tokens[0].lower()
                 if amount_token == "all":
                     bet_amount = int(user.balance)
@@ -57,106 +58,71 @@ class RouletteCog(commands.Cog):
                     await ctx.send(str(e))
                     return
 
-
                 if session_manager.has_session(user_id):
                     await ctx.send(f"{ctx.author.mention} You already have a game in progress!")
                     return
 
-                session_manager.create_session(user_id, Roulette(), user_bet)
-                game = session_manager.get_game(user_id)
+                # Create game with bet information
+                game = Roulette(bets, bet_amount)
+                session_manager.create_session(user_id, game, user_bet)
                 
-                total_winnings = game.play_round(bets, bet_amount)
-
-                await self.finalize_game(
-                    ctx,
-                    bets, # list of all of the roulette choices the user made
-                    total_bet, # total amount of money bet
-                    total_winnings, # total amount of money won
-                )
+                # Play the round
+                result = game.play_round()
+                
+                # Handle the game result
+                await self.handle_game_result(ctx, result)
                 
         except Exception as e:
             print(f"[EXCEPTION] in !roulette: {e}")
+            await ctx.send(f"An error occurred: {e}")
     
-    async def handle_payout(self, ctx, total_winnings):
-        print("handling payout")
+    async def handle_game_result(self, ctx, result):
+        """Handle the roulette game result with structured data"""
+        # Handle payout
         bet = session_manager.get_bet(ctx.author.id)
-        if not bet:
-            return 0
-        
-        return bet.payout_total(total_winnings)
-    
-    async def finalize_game(self, ctx, roulette_choices, total_bet, total_winnings):
-        game = session_manager.get_game(ctx.author.id)
-        await self.handle_payout(ctx, total_winnings)
+        if bet:
+            bet.payout_total(result["total_winnings"])
 
-        spinning_embed = self.build_spinning_embed(ctx, roulette_choices, total_bet)
+        # Show spinning animation
+        spinning_embed = self.build_spinning_embed(ctx, result)
         message = await ctx.send(embed=spinning_embed)
         await asyncio.sleep(3)
 
-        spin_number, spin_color = game.get_spin()
-        result_embed = self.build_result_embed(ctx, roulette_choices, total_bet, total_winnings, spin_number, spin_color)
+        # Show final result
+        result_embed = self.build_result_embed(ctx, result)
         await message.edit(embed=result_embed)
 
-        if total_winnings > 0:
-            await ctx.send(f"🎉 {ctx.author.mention} won `${total_winnings}` from roulette!")
-        # net_gain = total_winnings - total_bet
-        # if net_gain > 0:
-        #     await ctx.send(f"🎉 {ctx.author.mention} won `${net_gain}` from roulette!")
-        # elif net_gain < 0:
-        #     await ctx.send(f"😢 {ctx.author.mention} lost `${abs(net_gain)}`.")
-        # else:
-        #     await ctx.send(f"⚖️ {ctx.author.mention} broke even.")
+        # Send payout message
+        if result["total_winnings"] > 0:
+            await ctx.send(f"🎉 {ctx.author.mention} won `${result['total_winnings']}` from roulette!")
         
         session_manager.reset_session(ctx.author.id)
     
-    def build_spinning_embed(self, ctx, bets, total_bet):
+    def build_spinning_embed(self, ctx, result):
+        """Build the spinning animation embed"""
         embed = discord.Embed(
             title=f"Roulette | {ctx.author.display_name}",
             description=(
                 f"🎰 **Spinning the wheel...**\n\n"
-                f"**Your Bets:** `{', '.join(bets)}`\n"
-                f"**Total Wagered:** `${total_bet}`"
+                f"**Your Bets:** `{', '.join(result['bets'])}`\n"
+                f"**Total Wagered:** `${result['total_bet']}`"
             ),
             color=discord.Color.gold()
         )
         embed.set_footer(text="Good Luck!")
         return embed
     
-    def build_result_embed(self, ctx, bets, total_bet, total_winnings, spin_number, spin_color):
-        color_map = {
-            "red": "🔴",
-            "black": "⚫",
-            "green": "🟢"
-        }
-
-        emoji = color_map.get(spin_color, spin_color)
-        net_gain = total_winnings - total_bet
-
-        win_status = ""
-        if net_gain > 0:
-            win_status = "🤑 You won!"
-            embed_color = discord.Color.green()
-        elif net_gain < 0:
-            win_status = "❌ You lost."
-            embed_color = discord.Color.red()
-        else:
-            win_status = "⚖️ You broke even."
-            embed_color = discord.Color.blurple()
-        
-        description=(
-            f"{win_status}\n\n"
-            f"🎯 **Spin Result:** `{spin_number} {emoji}`\n\n"
-            f"💰 **Payout:** `${total_winnings}`\n"
-        )
+    def build_result_embed(self, ctx, result):
+        """Build the final result embed"""
         embed = discord.Embed(
             title=f"🎰 Roulette | {ctx.author.display_name}",
-            description=description,
-            color=embed_color
+            description=(
+                f"{result['outcome_message']}\n\n"
+                f"🎯 **Spin Result:** `{result['spin_display']}`\n\n"
+                f"💰 **Payout:** `${result['total_winnings']}`\n"
+            ),
+            color=result['embed_color']
         )
-
-        # embed.add_field(name="Spin Result", value=f"`{spin_number} {emoji}`", inline=False)
-        # embed.add_field(name="Payout", value=f"`{total_winnings}`", inline=True)
-        # embed.add_field(name="Outcome", value=win_status, inline=True)
         
         embed.set_footer(text="Thanks for playing roulette!")
         return embed
@@ -164,7 +130,7 @@ class RouletteCog(commands.Cog):
     @roulette.error
     async def roulette_error(self, ctx, error):
         if isinstance(error, commands.MissingRequiredArgument):
-            usage_text = "Usage: !roulette <bet type (\"!roulette options\" for bet choices)> <all | half | bet_amount>"
+            usage_text = "Usage: !roulette <amount ('all', 'half', or number)> <bets...>\nExample: !roulette 10 red 24 25"
             await ctx.send(usage_text)
         else:
             print(f"[ERROR in !roulette] {error}")
