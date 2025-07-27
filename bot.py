@@ -14,6 +14,7 @@ intents.message_content = True
 intents.members = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
+bot.remove_command('help')
 
 @bot.event
 async def on_ready():
@@ -29,6 +30,7 @@ async def main():
         await bot.load_extension("cogs.economy")
         await bot.load_extension("cogs.blackjack")
         await bot.load_extension("cogs.roulette")
+        await bot.load_extension("cogs.help")
         await bot.start(token)
 
 import asyncio
