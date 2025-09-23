@@ -1,9 +1,8 @@
 # Gambot
+Gambot is a Discord casino bot with an integrated economy system and support for multiple classic games
 
-Gambot is a Discord casino bot with an integrated economy system and support for multiple classic games.
----
 
-## Showcase
+## Demos
 Below are short clips demonstrating Gambot in action:  
 
 - Roulette Example (Coming Soon) 
