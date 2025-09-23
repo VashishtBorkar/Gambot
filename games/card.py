@@ -36,3 +36,14 @@ class Card:
     def get_value(self):
         return self.card_values[self.rank]
 
+    def to_dict(self):
+        return {"rank": self.rank, "suit": self.suit, "face_down": self.face_down}
+
+    @classmethod
+    def from_dict(cls, data):
+        return cls(
+            rank=data["rank"],
+            suit=data["suit"],
+            face_down=data.get("face_down", False)
+        )
+

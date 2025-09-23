@@ -1,5 +1,6 @@
 from ..deck import Deck
 from ..hand import Hand
+from ..card import Card
 
 class BlackjackHand(Hand):
     def get_total(self):
@@ -174,3 +175,29 @@ class Blackjack:
         self.player = BlackjackHand()
         self.doubled_down = False
         self.game_over = False
+
+    def to_dict(self):
+        return {
+            "dealer": [card.to_dict() for card in self.dealer.cards],
+            "player": [card.to_dict() for card in self.player.cards],
+            "doubled_down": self.doubled_down,
+            "bet_amount": self.bet_amount,
+            "game_over": self.game_over
+        }
+    
+    @classmethod
+    def from_dict(cls, data):
+        obj = cls(bet_amount=data["bet_amount"])
+
+        obj.dealer = BlackjackHand()
+        for card_data in data["dealer"]:
+            obj.dealer.add_card(Card.from_dict(card_data))
+
+        obj.player = BlackjackHand()
+        for card_data in data["player"]:
+            obj.player.add_card(Card.from_dict(card_data))
+
+        obj.doubled_down = data["doubled_down"]
+        obj.game_over = data["game_over"]
+
+        return obj
